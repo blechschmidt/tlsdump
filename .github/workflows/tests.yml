@@ -1,0 +1,23 @@
+on:
+  pull_request_review:
+    types: [submitted]
+  push:
+  workflow_dispatch:
+
+name: Tests
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install dependencies
+        run: sudo apt -y update; sudo apt -y install tshark
+      - name: Build
+        run: cmake . && make
+      - name: Tshark test
+        # Requires sudo because of traffic capture
+        run: sudo ./tests/test_tshark.sh
+      - name: Curl test
+        run: ./tests/test_curl.sh

@@ -1,0 +1,4 @@
+src/wireshark.c linguist-vendored
+src/wireshark.h linguist-vendored
+src/pint.h linguist-vendored
+src/tls.h linguist-vendored

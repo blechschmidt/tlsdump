@@ -1,0 +1,5 @@
+.idea
+.cmake
+/tlsdump
+CMakeFiles
+cmake-build-debug
