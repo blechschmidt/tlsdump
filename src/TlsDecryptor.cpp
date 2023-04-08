@@ -12,77 +12,120 @@ extern "C" void terminate(int) {
     std::_Exit(1);
 }
 
-bool TlsDecryptor::handle_full_record(TlsDecryptor::stream_chunk &chunk, Direction dir) {
-    add_record(chunk.record, dir);
+void TlsDecryptor::find_master_secret() {
+    prepare_decryption();
 
-    if (canDecrypt()) {
-        prepare_decryption();
+    std::cerr << "TLS handshake and data record captured. Probing memory ..." << std::endl;
 
-        std::cerr << "TLS handshake and data record captured. Probing memory ..." << std::endl;
+    MemoryExporter exporter(pid);
+    auto maps = exporter.get_memory_maps();
 
-        MemoryExporter exporter(pid);
-        auto maps = exporter.get_memory_maps();
+    bool done = false;
+    for (auto &map: maps) {
+        auto memory_ptr = exporter.get_memory_section(map);
+        auto memory = memory_ptr.get();
+        if (memory == nullptr || map.size() < SSL_MASTER_SECRET_LENGTH) {
+            continue;
+        }
+        size_t chunk_size = (map.size() - SSL_MASTER_SECRET_LENGTH + concurrency - 1) / concurrency;
+        pid_t pids[concurrency];
+        for (size_t task_index = 0; task_index < concurrency; task_index++) {
+            size_t start = task_index * chunk_size;
+            size_t end = std::min(start + chunk_size, map.size() - SSL_MASTER_SECRET_LENGTH);
 
-        bool done = false;
-        for (auto &map: maps) {
-            auto memory_ptr = exporter.get_memory_section(map);
-            auto memory = memory_ptr.get();
-            if (memory == nullptr || map.size() < SSL_MASTER_SECRET_LENGTH) {
-                continue;
-            }
-            size_t chunk_size = (map.size() - SSL_MASTER_SECRET_LENGTH + concurrency - 1) / concurrency;
-            pid_t pids[concurrency];
-            for (size_t task_index = 0; task_index < concurrency; task_index++) {
-                size_t start = task_index * chunk_size;
-                size_t end = std::min(start + chunk_size, map.size() - SSL_MASTER_SECRET_LENGTH);
-
-                // Threads would be a better solution here. However, there is some memory access
-                // that causes corruption.
-                // TODO: Use threads instead of forks.
-                pid_t pid = fork();
-                if (pid == 0) {
-                    std::signal(SIGUSR1, terminate);
-                    for (size_t i = start; i < end; i++) {
-                        bool decrypted = try_decrypt(memory + i);
-                        if (decrypted) {
-                            // Other files may write to the same stream.
-                            // TODO: Lock it somehow.
-                            auto outstream = this->output.is_open() ? &this->output : &std::cout;
-                            write_keylog_data(*outstream, memory + i);
-                            std::signal(SIGUSR1, SIG_IGN);
-                            abort_on_error(killpg(0, SIGUSR1));
-                            std::_Exit(0);
-                        }
+            // Threads would be a better solution here. However, there is some memory access
+            // that causes corruption.
+            // TODO: Use threads instead of forks.
+            pid_t pid = fork();
+            if (pid == 0) {
+                std::signal(SIGUSR1, terminate);
+                for (size_t i = start; i < end; i++) {
+                    bool decrypted = try_decrypt(memory + i);
+                    if (decrypted) {
+                        // Other files may write to the same stream.
+                        // TODO: Lock it somehow.
+                        auto outstream = this->output.is_open() ? &this->output : &std::cout;
+                        write_keylog_data(*outstream, memory + i);
+                        std::signal(SIGUSR1, SIG_IGN);
+                        abort_on_error(killpg(0, SIGUSR1));
+                        std::_Exit(0);
                     }
-                    std::_Exit(1);
                 }
-                pids[task_index] = pid;
+                std::_Exit(1);
             }
+            pids[task_index] = pid;
+        }
 
-            for (size_t task_index = 0; task_index < concurrency; task_index++) {
-                int status;
-                abort_on_error(waitpid(pids[task_index], &status, 0));
-                if (status == 0) {
-                    done = true;
-                }
+        for (size_t task_index = 0; task_index < concurrency; task_index++) {
+            int status;
+            abort_on_error(waitpid(pids[task_index], &status, 0));
+            if (status == 0) {
+                done = true;
             }
+        }
 
-            if (done) {
+        if (done) {
+            break;
+        }
+
+    }
+    this->finished = true;
+    std::cerr << "Probing done" << std::endl;
+}
+
+void TlsDecryptor::handle_full_record(TlsDecryptor::stream_chunk &chunk, Direction dir) {
+    switch (chunk.record.content_type) {
+        case SSL_ID_HANDSHAKE: {
+            if (chunk.record.length < 1) {
                 break;
             }
 
+            uint8_t handshake_type = chunk.record.data[0];
+
+            if (handshake_type != SSL_HND_CLIENT_HELLO && handshake_type != SSL_HND_SERVER_HELLO) {
+                break;
+            }
+
+            if (handshake_type == SSL_HND_CLIENT_HELLO && chunk.record.length >= 38) {
+                client_hello_seen = true;
+                std::memcpy(client_random, chunk.record.data + 6, 32);
+                std::cerr << "CLIENT RANDOM:" << std::endl;
+                hexdump(std::cerr, client_random, 32);
+
+            }
+
+            if (handshake_type == SSL_HND_SERVER_HELLO && chunk.record.length >= 40) {
+                server_hello_seen = true;
+                std::memcpy(server_random, chunk.record.data + 6, 32);
+                std::cerr << "SERVER RANDOM:" << std::endl;
+                hexdump(std::cerr, server_random, 32);
+
+                uint8_t session_id_length = chunk.record.data[38];
+                if (chunk.record.length > 38 + session_id_length + 2) {
+                    cipher_suite = ((chunk.record.data[38 + session_id_length + 1] << 8)
+                                    | (chunk.record.data[38 + session_id_length + 2]));
+                    std::cerr << "CIPHER SUITE" << cipher_suite << std::endl;
+                    cipher_suite_set = true;
+                }
+            }
+            break;
         }
-        this->finished = true;
-        std::cerr << "Probing done" << std::endl;
+        case SSL_ID_APP_DATA: {
+            data_record = chunk.record;
+            has_data_record = true;
+            break;
+        }
+    }
+
+    if (may_decrypt()) {
+        this->find_master_secret();
     }
 
     delete[] chunk.record.data;
     chunk = {};
-
-    return true;
 }
 
-void TlsDecryptor::append_records(const uint8_t *data, size_t len, Direction dir) {
+void TlsDecryptor::handle_data(const uint8_t *data, size_t len, Direction dir) {
 #define CONSUME_BYTE() len--; chunk.read++; data++;
 
     stream_chunk &chunk = dir == Direction::Out ? upchunk : downchunk;
@@ -111,7 +154,7 @@ void TlsDecryptor::append_records(const uint8_t *data, size_t len, Direction dir
             uint16_t read = std::min((size_t) chunk.record.length - offset, len);
             std::memmove(chunk.record.data + offset, data, read);
             chunk.read += read;
-            if (has_full_record(chunk)) {
+            if (is_chunk_complete(chunk)) {
                 handle_full_record(chunk, dir);
             }
             data += read;
@@ -120,57 +163,12 @@ void TlsDecryptor::append_records(const uint8_t *data, size_t len, Direction dir
     }
 }
 
-void TlsDecryptor::add_record(TlsDecryptor::tls_record &record, Direction dir) {
-    switch (record.content_type) {
-        case SSL_ID_HANDSHAKE: {
-            if (record.length < 1) {
-                return;
-            }
-
-            uint8_t handshake_type = record.data[0];
-
-            if (handshake_type != SSL_HND_CLIENT_HELLO && handshake_type != SSL_HND_SERVER_HELLO) {
-                return;
-            }
-
-            if (handshake_type == SSL_HND_CLIENT_HELLO && record.length >= 38) {
-                client_hello_seen = true;
-                std::memcpy(client_random, record.data + 6, 32);
-                std::cerr << "CLIENT RANDOM:" << std::endl;
-                hexdump(std::cerr, client_random, 32);
-
-            }
-
-            if (handshake_type == SSL_HND_SERVER_HELLO && record.length >= 40) {
-                server_hello_seen = true;
-                std::memcpy(server_random, record.data + 6, 32);
-                std::cerr << "SERVER RANDOM:" << std::endl;
-                hexdump(std::cerr, server_random, 32);
-
-                uint8_t session_id_length = record.data[38];
-                if (record.length > 38 + session_id_length + 2) {
-                    cipher_suite = ((record.data[38 + session_id_length + 1] << 8)
-                                    | (record.data[38 + session_id_length + 2]));
-                    std::cerr << "CIPHER SUITE" << cipher_suite << std::endl;
-                    cipher_suite_set = true;
-                }
-            }
-            break;
-        }
-        case SSL_ID_APP_DATA: {
-            data_record = record;
-            has_data_record = true;
-            break;
-        }
-    }
-}
-
-bool TlsDecryptor::canDecrypt() const {
+bool TlsDecryptor::may_decrypt() const {
     return client_hello_seen && server_hello_seen && cipher_suite_set && has_data_record;
 }
 
 void TlsDecryptor::prepare_decryption() {
-    if (!canDecrypt()) {
+    if (!may_decrypt()) {
         return;
     }
     decrypt_session.session.version = TLSV1DOT2_VERSION; //TLSV1DOT2_VERSION;
@@ -205,19 +203,19 @@ bool TlsDecryptor::try_decrypt(uint8_t *master_secret) {
 
 void TlsDecryptor::read(uint8_t *buffer, size_t length) {
     DataConsumer::read(buffer, length);
-    append_records(buffer, length, Direction::In);
+    handle_data(buffer, length, Direction::In);
 }
 
 void TlsDecryptor::write(uint8_t *buffer, size_t length) {
     DataConsumer::write(buffer, length);
-    append_records(buffer, length, Direction::Out);
+    handle_data(buffer, length, Direction::Out);
 }
 
 bool TlsDecryptor::is_finished() const {
     return this->finished;
 }
 
-bool TlsDecryptor::has_full_record(TlsDecryptor::stream_chunk &chunk) {
+bool TlsDecryptor::is_chunk_complete(TlsDecryptor::stream_chunk &chunk) {
     return chunk.read >= 5 && chunk.read - 5 == chunk.record.length;
 }
 
