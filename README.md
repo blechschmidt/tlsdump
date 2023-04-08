@@ -40,4 +40,5 @@ Sometimes you might want to inspect the TLS traffic of closed-source application
 engineer them.
 
 ## Limitations
-A target program can easily evade this approach by obfuscating the keys stored in memory. A simple XOR would suffice.
+* A target program can easily evade this approach by obfuscating the keys stored in memory. A simple XOR would suffice.
+* The current implementation does not support processes that perform fork operations.
