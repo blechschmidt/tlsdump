@@ -35,5 +35,9 @@ completion of a handshake is detected, TLSDump will pause the target program, ex
 exhaustive search over the memory by testing whether the current search position is the start of a TLS master secret. To
 this end, decryption functions copied from the Wireshark project are used.
 
+## Why?
+Sometimes you might want to inspect the TLS traffic of closed-source applications without having to tediously reverse
+engineer them.
+
 ## Limitations
 A target program can easily evade this approach by obfuscating the keys stored in memory. A simple XOR would suffice.
