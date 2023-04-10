@@ -1,6 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copied from the Wireshark project with some modifications.
 
+/* Original copyright notice:
+ *
+ * packet-tls.c:
+ * Copyright (c) 2000-2001, Scott Renfro <scott@renfro.org>
+ * Copyright 2013-2019, Peter Wu <peter@lekensteyn.nl>
+ *
+ * packet-tls-utils.h:
+ * Paolo Abeni <paolo.abeni@email.com>
+ *
+ * packet-tls-utils.c:
+ * Paolo Abeni <paolo.abeni@email.com>
+ * Copyright (c) 2013, Hauke Mehrtens <hauke@hauke-m.de>
+ * Copyright (c) 2014, Peter Wu <peter@lekensteyn.nl>
+ *
+ * Wireshark - Network traffic analyzer
+ * By Gerald Combs <gerald@wireshark.org>
+ * Copyright 1998 Gerald Combs
+ */
+
 #include "wireshark.h"
 
 gint ssl_decrypt_record(SslDecryptSession *ssl, SslDecoder *decoder, guint8 ct, guint16 record_version,
