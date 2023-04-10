@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: MIT
-// Copied from the Wireshark project.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copied from the Wireshark project with some modifications.
 
 #include "wireshark.h"
 
