@@ -39,6 +39,9 @@ this end, decryption functions copied from the Wireshark project are used.
 Sometimes you might want to inspect the TLS traffic of closed-source applications without having to tediously reverse
 engineer them.
 
+## TLS 1.3
+TLS 1.3 is currently not supported. However, adding support for TLS 1.3 should be possible as follows: First, identify the `CLIENT_HANDSHAKE_TRAFFIC_SECRET` by trying to decrypt the `Handshake Protocol: Finished` message through an exhaustive search in memory for the key. Having identified this secret, an exhaustive search for the `CLIENT_TRAFFIC_SECRET_0` should be possible.
+
 ## Limitations
 * A target program can easily evade this approach by obfuscating the keys stored in memory. A simple XOR would suffice.
 * The current implementation does not support processes that perform fork operations.
