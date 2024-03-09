@@ -15,7 +15,7 @@ Compilation requires [CMake](https://cmake.org/). First clone the repository, `c
 cmake . && make
 ```
 
-TLSDump will output the key in [NSS Key Log Format](https://firefox-source-docs.mozilla.org/security/nss/legacy/key_log_format/index.html).
+TLSDump will output the key in [SSLKEYLOGFILE Format](https://www.ietf.org/archive/id/draft-thomson-tls-keylogfile-00.html).
 
 The following will output the key material for the `curl` command:
 ```
