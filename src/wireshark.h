@@ -24,6 +24,7 @@
 #define TLSEXTRACTOR_WIRESHARK_H
 
 #define HAVE_LIBGCRYPT_AEAD
+#define HAVE_LIBGCRYPT_CHACHA20_POLY1305
 
 #include "pint.h"
 
@@ -1157,5 +1158,41 @@ ssl_decrypt_record(SslDecryptSession *ssl, SslDecoder *decoder, guint8 ct, guint
                    gboolean ignore_mac_failed,
                    const guchar *in, guint16 inl, const guchar *cid, guint8 cidl,
                    StringInfo *comp_str, StringInfo *out_str, guint *outl);
+
+/* TLS 1.3 HKDF functions {{{ */
+
+/**
+ * HKDF-Expand-Label as defined in RFC 8446 Section 7.1.
+ * Derives keying material from a secret using HKDF.
+ *
+ * @param hash_algo The gcrypt hash algorithm (e.g. GCRY_MD_SHA256).
+ * @param secret The input secret.
+ * @param secret_len Length of the secret.
+ * @param label The label (without "tls13 " prefix, which is added internally).
+ * @param context The context (hash) data, may be NULL if context_len is 0.
+ * @param context_len Length of the context.
+ * @param out_len Desired output length.
+ * @param out Output buffer (must be at least out_len bytes).
+ * @return 0 on success, -1 on failure.
+ */
+int
+tls13_hkdf_expand_label(int hash_algo, const guchar *secret, guint secret_len,
+                        const char *label, const guchar *context, guint context_len,
+                        guint16 out_len, guchar *out);
+
+/**
+ * Derive TLS 1.3 write key and IV from a traffic secret and initialize a decoder.
+ *
+ * @param decoder The decoder to initialize.
+ * @param cipher_suite The cipher suite.
+ * @param secret The traffic secret.
+ * @param secret_len Length of the traffic secret.
+ * @return 0 on success, -1 on failure.
+ */
+int
+tls13_init_decoder_from_secret(SslDecoder *decoder, const SslCipherSuite *cipher_suite,
+                               const guchar *secret, guint secret_len);
+
+/* TLS 1.3 HKDF functions }}} */
 
 #endif //TLSEXTRACTOR_WIRESHARK_H

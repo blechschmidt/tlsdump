@@ -3,6 +3,11 @@
 bool PtraceConnectionTracker::tracee_finish_syscall() {
     abort_on_error(ptrace(PTRACE_SYSCALL, pid, 0, 0));
     abort_on_error(waitpid(pid, &status, 0));
+
+    if (WIFEXITED(status)) {
+        return false;
+    }
+
     abort_on_error(ptrace(PTRACE_GETREGS, pid, 0, &state));
 
     return cast_syscall_result<long>() != -1;

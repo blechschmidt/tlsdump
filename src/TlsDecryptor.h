@@ -44,6 +44,19 @@ struct TlsDecryptor : DataConsumer {
 
     tls_record data_record = {};
 
+    /* TLS 1.3 state */
+    bool is_tls13 = false;
+    int tls13_out_app_count = 0;
+    int tls13_in_app_count = 0;
+    tls_record tls13_client_finished = {};
+    bool has_tls13_client_finished = false;
+    tls_record tls13_client_app_data = {};
+    bool has_tls13_client_app_data = false;
+    tls_record tls13_server_encrypted = {};
+    bool has_tls13_server_encrypted = false;
+    tls_record tls13_server_app_data = {};
+    bool has_tls13_server_app_data = false;
+
     SslDecryptSession decrypt_session = {};
 
     uint8_t decryption_buffer[0xFFFF] = {};
@@ -153,6 +166,39 @@ struct TlsDecryptor : DataConsumer {
      * This function extracts the target process memory and searches the master secret.
      */
     void find_master_secret();
+
+    /**
+     * Check whether a TLS 1.3 decryption attempt can be started.
+     * @return Whether enough TLS 1.3 records have been captured.
+     */
+    [[nodiscard]] bool may_decrypt_tls13() const;
+
+    /**
+     * Attempt to decrypt a TLS 1.3 record using a candidate traffic secret.
+     *
+     * @param candidate_secret The candidate traffic secret.
+     * @param record The TLS record to decrypt.
+     * @param seq The record sequence number.
+     * @return Whether the decryption was successful.
+     */
+    bool try_decrypt_tls13(uint8_t *candidate_secret, tls_record &record, uint64_t seq);
+
+    /**
+     * Search process memory for TLS 1.3 traffic secrets.
+     */
+    void find_tls13_secrets();
+
+    /**
+     * Write TLS 1.3 key log data.
+     *
+     * @tparam T The stream type.
+     * @param stream The stream to write to.
+     * @param label The key log label (e.g. "CLIENT_HANDSHAKE_TRAFFIC_SECRET").
+     * @param secret The traffic secret.
+     * @param secret_len Length of the secret.
+     */
+    template<typename T>
+    void write_tls13_keylog_data(T &stream, const char *label, const uint8_t *secret, size_t secret_len);
 };
 
 

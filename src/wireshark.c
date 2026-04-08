@@ -1615,3 +1615,140 @@ void ssl_cipher_cleanup(gcry_cipher_hd_t *cipher) {
         gcry_cipher_close(*cipher);
     *cipher = NULL;
 }
+
+/* TLS 1.3 HKDF functions {{{ */
+
+int
+tls13_hkdf_expand_label(int hash_algo, const guchar *secret, guint secret_len,
+                        const char *label, const guchar *context, guint context_len,
+                        guint16 out_len, guchar *out) {
+    /*
+     * HKDF-Expand-Label(Secret, Label, Context, Length) =
+     *     HKDF-Expand(Secret, HkdfLabel, Length)
+     *
+     * struct HkdfLabel {
+     *     uint16 length = Length;
+     *     opaque label<7..255> = "tls13 " + Label;
+     *     opaque context<0..255> = Context;
+     * };
+     *
+     * HKDF-Expand(PRK, info, L) with L <= HashLen requires only one iteration:
+     *     T(1) = HMAC-Hash(PRK, info || 0x01)
+     */
+    const char *prefix = "tls13 ";
+    guint prefix_len = 6;
+    guint label_len = strlen(label);
+    guint full_label_len = prefix_len + label_len;
+
+    /* Build the HkdfLabel (info parameter for HKDF-Expand) */
+    guint info_len = 2 + 1 + full_label_len + 1 + context_len;
+    guchar info[512];
+    if (info_len + 1 > sizeof(info)) {
+        return -1;
+    }
+
+    guchar *p = info;
+    /* uint16 length */
+    *p++ = (out_len >> 8) & 0xFF;
+    *p++ = out_len & 0xFF;
+    /* opaque label<7..255> */
+    *p++ = (guchar)full_label_len;
+    memcpy(p, prefix, prefix_len);
+    p += prefix_len;
+    memcpy(p, label, label_len);
+    p += label_len;
+    /* opaque context<0..255> */
+    *p++ = (guchar)context_len;
+    if (context_len > 0 && context != NULL) {
+        memcpy(p, context, context_len);
+        p += context_len;
+    }
+
+    /* HKDF-Expand: T(1) = HMAC-Hash(PRK, info || 0x01) */
+    gcry_md_hd_t hmac;
+    gcry_error_t err = gcry_md_open(&hmac, hash_algo, GCRY_MD_FLAG_HMAC);
+    if (err) {
+        ssl_debug_printf("tls13_hkdf_expand_label: gcry_md_open failed: %s\n", gcry_strerror(err));
+        return -1;
+    }
+    err = gcry_md_setkey(hmac, secret, secret_len);
+    if (err) {
+        ssl_debug_printf("tls13_hkdf_expand_label: gcry_md_setkey failed: %s\n", gcry_strerror(err));
+        gcry_md_close(hmac);
+        return -1;
+    }
+    gcry_md_write(hmac, info, info_len);
+    guchar counter = 0x01;
+    gcry_md_write(hmac, &counter, 1);
+
+    guint hash_len = gcry_md_get_algo_dlen(hash_algo);
+    guchar *digest = gcry_md_read(hmac, hash_algo);
+    if (!digest || out_len > hash_len) {
+        gcry_md_close(hmac);
+        return -1;
+    }
+    memcpy(out, digest, out_len);
+    gcry_md_close(hmac);
+
+    ssl_print_data("tls13_hkdf_expand_label output", out, out_len);
+    return 0;
+}
+
+int
+tls13_init_decoder_from_secret(SslDecoder *decoder, const SslCipherSuite *cipher_suite,
+                               const guchar *secret, guint secret_len) {
+    int hash_algo;
+    gint cipher_algo;
+    guint key_len;
+    guchar key[MAX_KEY_SIZE];
+    guchar iv[TLS13_AEAD_NONCE_LENGTH];
+
+    /* Determine hash algorithm from cipher suite digest */
+    switch (cipher_suite->dig) {
+        case DIG_SHA384:
+            hash_algo = GCRY_MD_SHA384;
+            break;
+        case DIG_SHA256:
+        default:
+            hash_algo = GCRY_MD_SHA256;
+            break;
+    }
+
+    /* Get cipher algorithm */
+    cipher_algo = ssl_get_cipher_algo(cipher_suite);
+    if (cipher_algo == 0) {
+        ssl_debug_printf("tls13_init_decoder_from_secret: unsupported cipher\n");
+        return -1;
+    }
+
+    key_len = gcry_cipher_get_algo_keylen(cipher_algo);
+
+    /* Derive write key: HKDF-Expand-Label(secret, "key", "", key_length) */
+    if (tls13_hkdf_expand_label(hash_algo, secret, secret_len, "key", NULL, 0, key_len, key) != 0) {
+        ssl_debug_printf("tls13_init_decoder_from_secret: failed to derive key\n");
+        return -1;
+    }
+    ssl_print_data("TLS 1.3 derived key", key, key_len);
+
+    /* Derive write IV: HKDF-Expand-Label(secret, "iv", "", 12) */
+    if (tls13_hkdf_expand_label(hash_algo, secret, secret_len, "iv", NULL, 0, TLS13_AEAD_NONCE_LENGTH, iv) != 0) {
+        ssl_debug_printf("tls13_init_decoder_from_secret: failed to derive IV\n");
+        return -1;
+    }
+    ssl_print_data("TLS 1.3 derived IV", iv, TLS13_AEAD_NONCE_LENGTH);
+
+    /* Initialize decoder */
+    memset(decoder, 0, sizeof(*decoder));
+    decoder->cipher_suite = cipher_suite;
+    decoder->write_iv.data = decoder->_mac_key_or_write_iv;
+    ssl_data_set(&decoder->write_iv, iv, TLS13_AEAD_NONCE_LENGTH);
+
+    if (ssl_cipher_init(&decoder->evp, cipher_algo, key, iv, cipher_suite->mode) < 0) {
+        ssl_debug_printf("tls13_init_decoder_from_secret: cipher init failed\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+/* TLS 1.3 HKDF functions }}} */
