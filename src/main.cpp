@@ -4,6 +4,7 @@
 #include <string>
 
 #include <unistd.h>
+#include <gcrypt.h>
 
 #include "PtraceConnectionTracker.h"
 #include "util.h"
@@ -27,6 +28,10 @@ pid_t start_process(char *file, char **argv) {
 int main(int argc, char **argv) {
     pid_t process_pid;
     std::string filename;
+
+    /* Initialize libgcrypt for multi-threaded use. */
+    gcry_check_version(NULL);
+    gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
 
     abort_on_error(setpgid(0, 0));
     std::signal(SIGUSR1, SIG_IGN);
