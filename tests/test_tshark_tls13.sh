@@ -5,7 +5,7 @@ cd "$(dirname -- "$0")"
 # HTTPS site that is fetched.
 site="https://example.com"
 # String that must be found on the site for the test to be successful.
-string="Example Domain"
+string="This domain is for use in documentation examples without needing permission."
 
 tcap="$(mktemp --suffix .pcap)"
 keylogfile="$(mktemp)"
