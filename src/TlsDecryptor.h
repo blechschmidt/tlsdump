@@ -1,11 +1,12 @@
 #ifndef TLSDUMP_TLSDECRYPTOR_H
 #define TLSDUMP_TLSDECRYPTOR_H
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <mutex>
 
 #include <sys/socket.h>
-#include <sys/wait.h>
 #include <thread>
 #include <memory>
 
@@ -121,10 +122,12 @@ struct TlsDecryptor : DataConsumer {
 
     /**
      *
+     * @param local_session Thread-local copy of the decrypt session.
      * @param master_secret The 48 byte long master secret used for the decryption attempt.
+     * @param local_out Thread-local output buffer for decryption.
      * @return Whether the decryption attempt was successful, i.e. whether the correct master secret was supplied.
      */
-    bool try_decrypt(uint8_t *master_secret);
+    bool try_decrypt(SslDecryptSession &local_session, uint8_t *master_secret, StringInfo *local_out);
 
     /**
      * Output the master secret to a specified output stream in NSS key log format.
@@ -181,7 +184,7 @@ struct TlsDecryptor : DataConsumer {
      * @param seq The record sequence number.
      * @return Whether the decryption was successful.
      */
-    bool try_decrypt_tls13(uint8_t *candidate_secret, tls_record &record, uint64_t seq);
+    bool try_decrypt_tls13(uint8_t *candidate_secret, tls_record &record, uint64_t seq, StringInfo *local_out);
 
     /**
      * Search process memory for TLS 1.3 traffic secrets.

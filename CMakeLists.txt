@@ -21,4 +21,5 @@ pkg_search_module(GLIB REQUIRED glib-2.0)
 include_directories(${GLIB_INCLUDE_DIRS})
 link_directories(${GLIB_LIBRARY_DIRS})
 
-target_link_libraries(tlsdump ${GLIB_LIBRARIES} gcrypt)
+find_package(Threads REQUIRED)
+target_link_libraries(tlsdump ${GLIB_LIBRARIES} gcrypt Threads::Threads)

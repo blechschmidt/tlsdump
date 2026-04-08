@@ -1,16 +1,12 @@
 #include "TlsDecryptor.h"
-#include <csignal>
 #include <vector>
 
 TlsDecryptor::TlsDecryptor(pid_t pid, std::string filename) : DataConsumer(pid) {
     concurrency = std::thread::hardware_concurrency();
+    if (concurrency == 0) concurrency = 1;
     if (!filename.empty()) {
         this->output.open(filename);
     }
-}
-
-extern "C" void terminate(int) {
-    std::_Exit(1);
 }
 
 void TlsDecryptor::find_master_secret() {
@@ -21,54 +17,44 @@ void TlsDecryptor::find_master_secret() {
     MemoryExporter exporter(pid);
     auto maps = exporter.get_memory_maps();
 
-    bool done = false;
+    std::atomic<bool> found(false);
+    std::mutex output_mutex;
+
     for (auto &map: maps) {
+        if (found) break;
         auto memory_ptr = exporter.get_memory_section(map);
         auto memory = memory_ptr.get();
         if (memory == nullptr || map.size() < SSL_MASTER_SECRET_LENGTH) {
             continue;
         }
-        size_t chunk_size = (map.size() - SSL_MASTER_SECRET_LENGTH + concurrency - 1) / concurrency;
-        pid_t pids[concurrency];
+        size_t search_range = map.size() - SSL_MASTER_SECRET_LENGTH;
+        size_t chunk_size = (search_range + concurrency - 1) / concurrency;
+
+        std::vector<std::thread> threads;
         for (size_t task_index = 0; task_index < concurrency; task_index++) {
             size_t start = task_index * chunk_size;
-            size_t end = std::min(start + chunk_size, map.size() - SSL_MASTER_SECRET_LENGTH);
+            size_t end = std::min(start + chunk_size, search_range);
 
-            // Threads would be a better solution here. However, there is some memory access
-            // that causes corruption.
-            // TODO: Use threads instead of forks.
-            pid_t pid = fork();
-            if (pid == 0) {
-                std::signal(SIGUSR1, terminate);
-                for (size_t i = start; i < end; i++) {
-                    bool decrypted = try_decrypt(memory + i);
+            threads.emplace_back([this, &found, &output_mutex, memory, start, end]() {
+                auto local_buffer = std::make_unique<uint8_t[]>(0xFFFF);
+                StringInfo local_out = {local_buffer.get(), 0xFFFF};
+                SslDecryptSession local_session = decrypt_session;
+
+                for (size_t i = start; i < end && !found.load(std::memory_order_relaxed); i++) {
+                    bool decrypted = try_decrypt(local_session, memory + i, &local_out);
                     if (decrypted) {
-                        // Other files may write to the same stream.
-                        // TODO: Lock it somehow.
+                        found.store(true, std::memory_order_relaxed);
+                        std::lock_guard<std::mutex> lock(output_mutex);
                         auto outstream = this->output.is_open() ? &this->output : &std::cout;
                         write_keylog_data(*outstream, memory + i);
-                        std::signal(SIGUSR1, SIG_IGN);
-                        abort_on_error(killpg(0, SIGUSR1));
-                        std::_Exit(0);
                     }
                 }
-                std::_Exit(1);
-            }
-            pids[task_index] = pid;
+            });
         }
 
-        for (size_t task_index = 0; task_index < concurrency; task_index++) {
-            int status;
-            abort_on_error(waitpid(pids[task_index], &status, 0));
-            if (status == 0) {
-                done = true;
-            }
+        for (auto &t : threads) {
+            t.join();
         }
-
-        if (done) {
-            break;
-        }
-
     }
     this->finished = true;
     std::cerr << "Probing done" << std::endl;
@@ -234,17 +220,17 @@ void TlsDecryptor::prepare_decryption() {
     decrypt_session.state |= SSL_CIPHER;
 }
 
-bool TlsDecryptor::try_decrypt(uint8_t *master_secret) {
-    decrypt_session.master_secret = {master_secret, SSL_MASTER_SECRET_LENGTH};
-    ssl_generate_keyring_material(&decrypt_session);
+bool TlsDecryptor::try_decrypt(SslDecryptSession &local_session, uint8_t *master_secret, StringInfo *local_out) {
+    local_session.master_secret = {master_secret, SSL_MASTER_SECRET_LENGTH};
+    ssl_generate_keyring_material(&local_session);
     guint outl;
-    decrypt_session.client_new.seq = 1;
-    decrypt_session.client_new.cipher_suite = decrypt_session.cipher_suite;
-    int result = ssl_decrypt_record(&decrypt_session, &decrypt_session.client_new, SSL_ID_APP_DATA,
+    local_session.client_new.seq = 1;
+    local_session.client_new.cipher_suite = local_session.cipher_suite;
+    int result = ssl_decrypt_record(&local_session, &local_session.client_new, SSL_ID_APP_DATA,
                                     data_record.version, false,
-                                    data_record.data, data_record.length, nullptr, 0, nullptr, &out, &outl);
-    gcry_cipher_close(decrypt_session.client_new.evp);
-    gcry_cipher_close(decrypt_session.server_new.evp);
+                                    data_record.data, data_record.length, nullptr, 0, nullptr, local_out, &outl);
+    gcry_cipher_close(local_session.client_new.evp);
+    gcry_cipher_close(local_session.server_new.evp);
     return result == 0;
 }
 
@@ -297,7 +283,7 @@ bool TlsDecryptor::may_decrypt_tls13() const {
            && has_tls13_server_encrypted && has_tls13_server_app_data;
 }
 
-bool TlsDecryptor::try_decrypt_tls13(uint8_t *candidate_secret, tls_record &record, uint64_t seq) {
+bool TlsDecryptor::try_decrypt_tls13(uint8_t *candidate_secret, tls_record &record, uint64_t seq, StringInfo *local_out) {
     const SslCipherSuite *cs = ssl_find_cipher(cipher_suite);
     if (!cs) return false;
 
@@ -317,7 +303,7 @@ bool TlsDecryptor::try_decrypt_tls13(uint8_t *candidate_secret, tls_record &reco
     guint outl;
     int result = ssl_decrypt_record(&session, &decoder, SSL_ID_APP_DATA,
                                      record.version, false,
-                                     record.data, record.length, nullptr, 0, nullptr, &out, &outl);
+                                     record.data, record.length, nullptr, 0, nullptr, local_out, &outl);
     gcry_cipher_close(decoder.evp);
     return result == 0;
 }
@@ -361,12 +347,14 @@ void TlsDecryptor::find_tls13_secrets() {
         {"SERVER_TRAFFIC_SECRET_0", &tls13_server_app_data, 0},
     };
 
+    std::mutex output_mutex;
+
     for (auto &target : targets) {
         std::cerr << "Searching for " << target.label << " ..." << std::endl;
-        bool done = false;
+        std::atomic<bool> found(false);
 
         for (auto &section : sections) {
-            if (done) break;
+            if (found) break;
 
             auto memory = section.data.get();
             size_t map_size = section.entry.size();
@@ -374,40 +362,34 @@ void TlsDecryptor::find_tls13_secrets() {
 
             size_t search_range = map_size - secret_len;
             size_t chunk_size = (search_range + concurrency - 1) / concurrency;
-            pid_t pids[concurrency];
 
+            std::vector<std::thread> threads;
             for (size_t task_index = 0; task_index < concurrency; task_index++) {
                 size_t start = task_index * chunk_size;
                 size_t end = std::min(start + chunk_size, search_range);
 
-                pid_t cpid = fork();
-                if (cpid == 0) {
-                    std::signal(SIGUSR1, terminate);
-                    for (size_t i = start; i < end; i++) {
-                        bool decrypted = try_decrypt_tls13(memory + i, *target.record, target.seq);
+                threads.emplace_back([this, &found, &output_mutex, &target, memory, start, end, secret_len]() {
+                    auto local_buffer = std::make_unique<uint8_t[]>(0xFFFF);
+                    StringInfo local_out = {local_buffer.get(), 0xFFFF};
+
+                    for (size_t i = start; i < end && !found.load(std::memory_order_relaxed); i++) {
+                        bool decrypted = try_decrypt_tls13(memory + i, *target.record, target.seq, &local_out);
                         if (decrypted) {
+                            found.store(true, std::memory_order_relaxed);
+                            std::lock_guard<std::mutex> lock(output_mutex);
                             auto outstream = this->output.is_open() ? &this->output : &std::cout;
                             write_tls13_keylog_data(*outstream, target.label, memory + i, secret_len);
-                            std::signal(SIGUSR1, SIG_IGN);
-                            abort_on_error(killpg(0, SIGUSR1));
-                            std::_Exit(0);
                         }
                     }
-                    std::_Exit(1);
-                }
-                pids[task_index] = cpid;
+                });
             }
 
-            for (size_t task_index = 0; task_index < concurrency; task_index++) {
-                int status;
-                abort_on_error(waitpid(pids[task_index], &status, 0));
-                if (status == 0) {
-                    done = true;
-                }
+            for (auto &t : threads) {
+                t.join();
             }
         }
 
-        if (!done) {
+        if (!found) {
             std::cerr << "Warning: " << target.label << " not found" << std::endl;
         }
     }
