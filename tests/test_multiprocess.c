@@ -22,9 +22,10 @@ static void do_request(const char *url) {
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+    curl_easy_setopt(curl, CURLOPT_ENCODING, "identity");
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        fprintf(stderr, "curl_easy_perform: %s\n", curl_easy_strerror(res));
+        fprintf(stderr, "curl_easy_perform(%s): %s\n", url, curl_easy_strerror(res));
     }
     curl_easy_cleanup(curl);
 }
@@ -35,8 +36,8 @@ static void *thread_func(void *arg) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 3) {
-        fprintf(stderr, "Usage: %s --fork|--thread <url>\n", argv[0]);
+    if (argc < 4) {
+        fprintf(stderr, "Usage: %s --fork|--thread <url1> <url2>\n", argv[0]);
         return 1;
     }
 
@@ -58,11 +59,9 @@ int main(int argc, char **argv) {
         if (child == 0) {
             close(p2c[1]);
             close(c2p[0]);
-            do_request(argv[2]);
-            /* Signal parent: child request done */
+            do_request(argv[3]);
             write(c2p[1], "x", 1);
             close(c2p[1]);
-            /* Wait for parent to finish */
             char buf;
             read(p2c[0], &buf, 1);
             close(p2c[0]);
@@ -71,18 +70,15 @@ int main(int argc, char **argv) {
         }
         close(p2c[0]);
         close(c2p[1]);
-        /* Wait for child to finish its request */
         char buf;
         read(c2p[0], &buf, 1);
         close(c2p[0]);
-        /* Parent makes its request */
         do_request(argv[2]);
-        /* Signal child to exit */
         close(p2c[1]);
         waitpid(child, NULL, 0);
     } else if (strcmp(argv[1], "--thread") == 0) {
         pthread_t tid;
-        pthread_create(&tid, NULL, thread_func, argv[2]);
+        pthread_create(&tid, NULL, thread_func, argv[3]);
         do_request(argv[2]);
         pthread_join(tid, NULL);
     } else {
