@@ -9,7 +9,6 @@ string="This domain is for use in documentation examples without needing permiss
 
 tcap="$(mktemp --suffix .pcap)"
 keylogfile="$(mktemp)"
-tobj="$(mktemp -d)"
 tshark -Q -w "$tcap" & tpid=$!
 sleep 3 # Give tshark some time to set up its capture socket etc.
 
@@ -18,8 +17,10 @@ cat "$keylogfile"
 
 sleep 3 # Give tshark some time to capture the rest
 kill "$tpid"
-tshark --export-objects http,"$tobj" -o tls.keylog_file:"$keylogfile" -r "$tcap" > /dev/null
-grep -r "$string" "$tobj" > /dev/null
+
+# Use follow stream to verify decrypted content. This is more robust than
+# --export-objects which requires ALPN detection from the encrypted handshake.
+tshark -o tls.keylog_file:"$keylogfile" -r "$tcap" -q -z follow,tls,ascii,0 2>/dev/null | grep -q "$string"
 
 test "$?" = "0" && {
 	echo "Test succeeded"

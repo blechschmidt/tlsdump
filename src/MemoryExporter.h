@@ -13,6 +13,7 @@
 struct ProcMapEntry {
     uintptr_t start;
     uintptr_t end;
+    bool readable;
 
     [[nodiscard]] size_t size() const {
         return end - start;

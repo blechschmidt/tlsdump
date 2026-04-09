@@ -14,8 +14,9 @@ std::list<ProcMapEntry> MemoryExporter::get_memory_maps() const {
     for (std::string line; std::getline(iss, line);) {
         ProcMapEntry entry = {};
         auto minus = line.find('-');
+        auto space = line.find(' ');
         auto start_str = line.substr(0, minus);
-        auto end_str = line.substr(minus + 1, line.find(' ') - minus - 1);
+        auto end_str = line.substr(minus + 1, space - minus - 1);
 
         std::stringstream ss;
 
@@ -25,6 +26,10 @@ std::list<ProcMapEntry> MemoryExporter::get_memory_maps() const {
         ss << std::hex << end_str;
         ss >> entry.end;
 
+        // Parse permissions field (e.g. "rw-p", "r--p", "---p")
+        auto perms = line.substr(space + 1, 4);
+        entry.readable = !perms.empty() && perms[0] == 'r';
+
         result.push_back(entry);
     }
 
@@ -32,6 +37,9 @@ std::list<ProcMapEntry> MemoryExporter::get_memory_maps() const {
 }
 
 std::shared_ptr<uint8_t[]> MemoryExporter::get_memory_section(ProcMapEntry &entry) const {
+    if (!entry.readable) {
+        return nullptr;
+    }
     size_t len = entry.end - entry.start;
     auto result = std::shared_ptr<uint8_t[]>(new uint8_t[len]);
     struct iovec local = {};
@@ -41,7 +49,7 @@ std::shared_ptr<uint8_t[]> MemoryExporter::get_memory_section(ProcMapEntry &entr
     remote.iov_base = reinterpret_cast<void *>(entry.start);
     remote.iov_len = len;
     ssize_t read_len = process_vm_readv(this->pid, &local, 1, &remote, 1, 0);
-    if (read_len != len) {
+    if (read_len != (ssize_t)len) {
         // no partial reads if there is only a single iovec according to the man page
         std::cerr << "Failed to extract memory from process " << pid
                   << std::hex << " (" << entry.start << "-" << entry.end << "): " << std::dec << std::strerror(errno)
