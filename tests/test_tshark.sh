@@ -20,13 +20,17 @@ cat "$keylogfile"
 
 sleep 3 # Give tshark some time to capture the rest
 kill "$tpid"
-tshark --export-objects http,"$tobj" -o tls.keylog_file:"$keylogfile" -r "$tcap" > /dev/null
-grep -r "$string" "$tobj" > /dev/null
 
-test "$?" = "0" && {
+tshark --export-objects http,"$tobj" -o tls.keylog_file:"$keylogfile" -r "$tcap" > /dev/null 2>&1
+grep -rq "$string" "$tobj" && {
 	echo "Test succeeded"
 	exit 0
-} || {
-	echo "Test failed"
-	exit 1
 }
+
+tshark -o tls.keylog_file:"$keylogfile" -r "$tcap" -q -z follow,tls,ascii,0 2>/dev/null | grep -q "$string" && {
+	echo "Test succeeded"
+	exit 0
+}
+
+echo "Test failed"
+exit 1
