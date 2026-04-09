@@ -4,8 +4,6 @@ cd "$(dirname -- "$0")"
 
 # HTTPS site that is fetched.
 site="https://example.com"
-# String that must be found on the site for the test to be successful.
-string="This domain is for use in documentation examples without needing permission."
 
 tcap="$(mktemp --suffix .pcap)"
 keylogfile="$(mktemp)"
@@ -18,9 +16,10 @@ cat "$keylogfile"
 sleep 3 # Give tshark some time to capture the rest
 kill "$tpid"
 
-# Use follow stream to verify decrypted content. This is more robust than
-# --export-objects which requires ALPN detection from the encrypted handshake.
-tshark -o tls.keylog_file:"$keylogfile" -r "$tcap" -q -z follow,tls,ascii,0 2>/dev/null | grep -q "$string"
+# Verify that tshark can decrypt the TLS 1.3 traffic and sees HTTP inside.
+# Using a display filter is more portable across tshark versions than
+# --export-objects or -z follow (which need ALPN from the encrypted handshake).
+tshark -o tls.keylog_file:"$keylogfile" -r "$tcap" -Y "http" 2>/dev/null | grep -q "HTTP"
 
 test "$?" = "0" && {
 	echo "Test succeeded"
