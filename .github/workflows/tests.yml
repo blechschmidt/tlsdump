@@ -13,7 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt -y update; sudo apt -y install tshark libgcrypt-dev libglib2.0-dev
+        run: |
+          # Install newer tshark from Wireshark PPA (Ubuntu 24.04 ships 4.2.2 which
+          # cannot decrypt TLS 1.3 with only traffic secrets).
+          sudo add-apt-repository -y ppa:wireshark-dev/stable
+          sudo apt -y update
+          sudo apt -y install tshark libgcrypt-dev libglib2.0-dev
       - name: Build
         run: cmake . && make
       - name: Run tests
