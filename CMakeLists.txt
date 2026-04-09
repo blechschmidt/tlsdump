@@ -23,3 +23,12 @@ link_directories(${GLIB_LIBRARY_DIRS})
 
 find_package(Threads REQUIRED)
 target_link_libraries(tlsdump ${GLIB_LIBRARIES} gcrypt Threads::Threads)
+
+# Test helper for multi-process/thread tracing tests
+pkg_search_module(CURL libcurl)
+if(CURL_FOUND)
+    add_executable(test_multiprocess tests/test_multiprocess.c)
+    target_include_directories(test_multiprocess PRIVATE ${CURL_INCLUDE_DIRS})
+    target_link_directories(test_multiprocess PRIVATE ${CURL_LIBRARY_DIRS})
+    target_link_libraries(test_multiprocess ${CURL_LIBRARIES} Threads::Threads)
+endif()

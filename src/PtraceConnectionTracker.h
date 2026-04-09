@@ -17,68 +17,45 @@
 
 
 class PtraceConnectionTracker {
-    pid_t pid;
-    int status = 0;
-    std::unordered_map<int, std::unique_ptr<DataConsumer>> streams;
+    struct TraceeState {
+        struct user_regs_struct regs = {};
+        bool at_entry = true;
+        int pending_syscall = -1;
+        pid_t tgid = 0; // thread group leader PID (process PID for fd namespace)
+    };
+
+    pid_t root_pid;
+    std::unordered_map<pid_t, TraceeState> tracees;
+    std::unordered_map<uint64_t, std::unique_ptr<DataConsumer>> streams;
     std::unordered_set<uint16_t> filtered_ports;
-    struct user_regs_struct state = {};
     std::unique_ptr<DataConsumerFactory> factory;
 
-    struct read_send_data {
-        int socket;
-        uint8_t *buffer;
-        ssize_t buffer_len;
-    };
+    static uint64_t stream_key(pid_t tgid, int fd) {
+        return (static_cast<uint64_t>(static_cast<uint32_t>(tgid)) << 32) |
+               static_cast<uint32_t>(fd);
+    }
 
 public:
     explicit PtraceConnectionTracker(pid_t pid, std::unique_ptr<DataConsumerFactory> factory);
 
-    /**
-     *
-     * @param port Add a port for filtering TCP
-     */
     void filter_port(uint16_t port);
 
-    /**
-     * Run the tracer in a loop and hook the system calls. Will not return unless the tracee has exited.
-     */
     void run();
 
 private:
-    /**
-     * Copy memory from the tracee into the tracer (our process).
-     *
-     * @param destination The destination buffer.
-     * @param address The source address in the tracee.
-     * @param len The data length.
-     */
-    void tracee_memcpy(uint8_t *destination, uint8_t *address, size_t len) const;
+    void tracee_memcpy(pid_t pid, uint8_t *destination, uint8_t *address, size_t len) const;
 
-    /**
-     * Called when the tracee process performs a connect syscall.
-     */
-    void tracee_connect();
+    void handle_syscall_exit(pid_t pid, TraceeState &ts);
 
-    /**
-     * Called when the tracee performs a close syscall.
-     */
-    void tracee_close();
+    void tracee_connect(pid_t pid, pid_t tgid, const struct user_regs_struct &regs);
 
-    /**
-     * Called when the tracee performs a recvmsg or sendmsg syscall.
-     *
-     * @param dir Specifies whether it was a receive or send call.
-     */
-    void tracee_recvmsg_sendmsg(Direction dir);
+    void tracee_close(pid_t pid, pid_t tgid, const struct user_regs_struct &regs);
 
-    void tracee_read_send(Direction dir);
+    void tracee_read_send(pid_t pid, pid_t tgid, const struct user_regs_struct &regs, Direction dir);
 
-    bool tracee_finish_syscall();
+    void tracee_recvmsg_sendmsg(pid_t pid, pid_t tgid, const struct user_regs_struct &regs, Direction dir);
 
     void removed_finished();
-
-    template<typename T>
-    T cast_syscall_result();
 };
 
 #endif //TLSDUMP_PTRACECONNECTIONTRACKER_H

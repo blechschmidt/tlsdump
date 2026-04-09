@@ -18,13 +18,13 @@ jobs:
           # cannot decrypt TLS 1.3 with only traffic secrets).
           sudo add-apt-repository -y ppa:wireshark-dev/stable
           sudo apt -y update
-          sudo apt -y install tshark libgcrypt-dev libglib2.0-dev
+          sudo apt -y install tshark libgcrypt-dev libglib2.0-dev libcurl4-openssl-dev
       - name: Build
         run: cmake . && make
       - name: Run tests
         run: |
           failed=0
-          for test in tests/test_tshark.sh tests/test_curl.sh tests/test_tshark_tls13.sh tests/test_curl_tls13.sh; do
+          for test in tests/test_tshark.sh tests/test_curl.sh tests/test_tshark_tls13.sh tests/test_curl_tls13.sh tests/test_fork.sh tests/test_thread.sh; do
             echo "=== Running $test ==="
             if sudo ./"$test"; then
               echo "=== PASSED: $test ==="

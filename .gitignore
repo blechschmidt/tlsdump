@@ -6,3 +6,4 @@ cmake-build-debug
 CMakeCache.txt
 Makefile
 *.cmake
+test_multiprocess

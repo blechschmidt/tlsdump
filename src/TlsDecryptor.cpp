@@ -5,7 +5,7 @@ TlsDecryptor::TlsDecryptor(pid_t pid, std::string filename) : DataConsumer(pid) 
     concurrency = std::thread::hardware_concurrency();
     if (concurrency == 0) concurrency = 1;
     if (!filename.empty()) {
-        this->output.open(filename);
+        this->output.open(filename, std::ios::app);
     }
 }
 

@@ -49,4 +49,3 @@ TLS 1.3 is supported. The approach works as follows: First, the `CLIENT_HANDSHAK
 
 ## Limitations
 * A target program can easily evade this approach by obfuscating the keys stored in memory. A simple XOR would suffice.
-* The current implementation does not support processes that perform fork operations.
