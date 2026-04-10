@@ -168,7 +168,7 @@ struct TlsDecryptor : DataConsumer {
     /**
      * This function extracts the target process memory and searches the master secret.
      */
-    void find_master_secret();
+    virtual void find_master_secret();
 
     /**
      * Check whether a TLS 1.3 decryption attempt can be started.
@@ -189,7 +189,7 @@ struct TlsDecryptor : DataConsumer {
     /**
      * Search process memory for TLS 1.3 traffic secrets.
      */
-    void find_tls13_secrets();
+    virtual void find_tls13_secrets();
 
     /**
      * Write TLS 1.3 key log data.

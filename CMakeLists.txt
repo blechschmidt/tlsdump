@@ -11,7 +11,10 @@ add_executable(tlsdump src/main.cpp
         src/TlsDecryptor.h src/TlsDecryptor.cpp
         src/Direction.h
         src/wireshark.h src/wireshark.c
-        src/DataConsumerFactory.h)
+        src/DataConsumerFactory.h
+        src/DeferredDumpFormat.h
+        src/DeferredDumpConsumer.h src/DeferredDumpConsumer.cpp
+        src/DeferredExtractor.h src/DeferredExtractor.cpp)
 
 find_package(PkgConfig REQUIRED)
 

@@ -24,7 +24,7 @@ jobs:
       - name: Run tests
         run: |
           failed=0
-          for test in tests/test_tshark.sh tests/test_curl.sh tests/test_tshark_tls13.sh tests/test_curl_tls13.sh tests/test_fork.sh tests/test_thread.sh; do
+          for test in tests/test_tshark.sh tests/test_curl.sh tests/test_tshark_tls13.sh tests/test_curl_tls13.sh tests/test_fork.sh tests/test_thread.sh tests/test_defer_tls12.sh tests/test_defer_tls13.sh; do
             echo "=== Running $test ==="
             if sudo ./"$test"; then
               echo "=== PASSED: $test ==="
