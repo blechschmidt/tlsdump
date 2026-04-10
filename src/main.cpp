@@ -33,10 +33,19 @@ int main(int argc, char **argv) {
     std::signal(SIGUSR1, SIG_IGN);
 
     if (argc < 2) {
-        std::cerr << "Usage: tlsdump [-w keylogfile] [--defer dir | --extract dir] -- command ..." << std::endl;
+        std::cerr << "Usage:" << std::endl;
+        std::cerr << "  tlsdump [options] [--] command [args...]" << std::endl;
+        std::cerr << "  tlsdump [options] pid" << std::endl;
+        std::cerr << "  tlsdump --extract <dir> [-w keylogfile]" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "Options:" << std::endl;
+        std::cerr << "  -w <file>       Write key material to file instead of stdout" << std::endl;
+        std::cerr << "  --defer <dir>   Dump TLS metadata and memory to dir (no key search)" << std::endl;
+        std::cerr << "  --extract <dir> Search for keys in dump files from dir" << std::endl;
         return 1;
     }
 
+    int cmd_start = 0; // index of first non-option argument (command or PID)
     for (int i = 1; i < argc; i++) {
         std::string arg(argv[i]);
         if (arg == "--") {
@@ -53,6 +62,8 @@ int main(int argc, char **argv) {
             defer_dir = std::string(argv[++i]);
         } else if (arg == "--extract" && i + 1 < argc) {
             extract_dir = std::string(argv[++i]);
+        } else if (!cmd_start) {
+            cmd_start = i;
         }
     }
 
@@ -61,8 +72,14 @@ int main(int argc, char **argv) {
         return deferred_extract(extract_dir, filename);
     }
 
-    if (process_pid == 0) {
-        process_pid = std::stoi(argv[1]);
+    if (process_pid == 0 && cmd_start > 0) {
+        // If the first non-option argument looks like a PID, attach to it.
+        // Otherwise, treat it as a command to execute.
+        try {
+            process_pid = std::stoi(argv[cmd_start]);
+        } catch (std::invalid_argument &) {
+            process_pid = start_process(argv[cmd_start], argv + cmd_start);
+        }
     }
 
     std::cerr << "Tracing PID " << process_pid << std::endl;

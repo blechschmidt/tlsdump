@@ -10,26 +10,57 @@ extractor based on [ptrace](https://man7.org/linux/man-pages/man2/ptrace.2.html)
 not implement many possible optimizations.
 
 ## Usage
-Compilation requires [CMake](https://cmake.org/). First clone the repository, `cd` into it, then run:
+Compilation requires [CMake](https://cmake.org/) and the development libraries for GLib and libgcrypt. First clone the repository, `cd` into it, then run:
 ```
 cmake . && make
 ```
 
 TLSDump will output the key in [SSLKEYLOGFILE Format](https://www.ietf.org/archive/id/draft-thomson-tls-keylogfile-00.html).
 
-The following will output the key material for the `curl` command (TLS 1.2):
+```
+tlsdump [options] [--] command [args...]
+tlsdump [options] pid
+tlsdump --extract <dir> [-w keylogfile]
+```
+
+### Options
+
+| Option | Description |
+|---|---|
+| `-w <file>` | Write key material to the specified file instead of stdout. |
+| `--defer <dir>` | Deferred capture mode. Dump TLS metadata and process memory to the directory instead of searching for keys inline. The key search can be performed later using `--extract`. |
+| `--extract <dir>` | Offline extraction mode. Read dump files from the directory and search for TLS keys. Does not trace any process. Can be run on a different machine than the capture. |
+| `--` | Separator between tlsdump options and the command to execute. Optional if the command does not start with a dash or a number. |
+
+### Examples
+
+Extract keys inline while running curl (TLS 1.2):
 ```
 tlsdump -- curl --tlsv1.2 --tls-max 1.2 --http1.1 https://example.org
 ```
 
-For TLS 1.3:
+Extract keys inline (TLS 1.3):
 ```
-tlsdump -- curl --http1.1 https://example.org
+tlsdump curl --http1.1 https://example.org
 ```
 
-Alternatively, the `-w` option can be used to specify a file which to write the key material to:
+Write key material to a file:
 ```
 tlsdump -w /tmp/sslkeylogfile.txt -- curl --http1.1 https://example.org
+```
+
+Attach to a running process by PID:
+```
+tlsdump -w /tmp/sslkeylogfile.txt 12345
+```
+
+Deferred two-stage capture and extraction:
+```
+# Stage 1: Capture (fast, no key search)
+tlsdump --defer /tmp/tlsdumps -- curl --http1.1 https://example.org
+
+# Stage 2: Extract keys offline (can be on a different machine)
+tlsdump --extract /tmp/tlsdumps -w /tmp/sslkeylogfile.txt
 ```
 
 ## How does it work?
